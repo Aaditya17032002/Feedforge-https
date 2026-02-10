@@ -39,15 +39,22 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown events."""
     logger.info("Starting HTTPS CSV Server...")
     logger.info(f"Data directory: {DATA_DIR.absolute()}")
-    logger.info(f"Certificates directory: {CERTS_DIR.absolute()}")
-    logger.info(f"Server will run on https://{SERVER_HOST}:{SERVER_PORT}")
     
-    # Check if SSL certificates exist
-    if not SSL_CERT_PATH.exists() or not SSL_KEY_PATH.exists():
-        logger.warning(
-            f"SSL certificates not found at {SSL_CERT_PATH} and {SSL_KEY_PATH}. "
-            "Please generate certificates using generate_certs.py"
-        )
+    # Check if running on Render
+    render_port = os.getenv("PORT")
+    if render_port:
+        logger.info(f"Running on Render - HTTPS handled by platform")
+        logger.info(f"Server will run on http://0.0.0.0:{render_port}")
+    else:
+        logger.info(f"Certificates directory: {CERTS_DIR.absolute()}")
+        logger.info(f"Server will run on https://{SERVER_HOST}:{SERVER_PORT}")
+        
+        # Check if SSL certificates exist (only for non-Render deployments)
+        if not SSL_CERT_PATH.exists() or not SSL_KEY_PATH.exists():
+            logger.warning(
+                f"SSL certificates not found at {SSL_CERT_PATH} and {SSL_KEY_PATH}. "
+                "Please generate certificates using generate_certs.py"
+            )
     
     yield
     
@@ -225,7 +232,20 @@ async def get_csv_file(filename: str):
 
 def main():
     """Main function to run the server."""
-    # Check if SSL certificates exist
+    # Check if running on Render (Render provides HTTPS automatically)
+    render_port = os.getenv("PORT")
+    if render_port:
+        logger.info(f"Running on Render - HTTPS handled by platform")
+        logger.info(f"Starting server on http://0.0.0.0:{render_port}")
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=int(render_port),
+            log_level="info"
+        )
+        return
+    
+    # Local/other deployment with SSL certificates
     if not SSL_CERT_PATH.exists() or not SSL_KEY_PATH.exists():
         logger.error(
             f"\n{'='*60}\n"
