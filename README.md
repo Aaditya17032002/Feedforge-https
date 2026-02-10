@@ -22,7 +22,7 @@ project/
 ├── requirements.txt       # Python dependencies
 ├── README.md             # This file
 ├── data/                 # Directory for CSV files
-│   └── product.csv       # Sample product feed CSV
+│   └── testa_product.csv # Sample product feed CSV
 └── certs/                # Directory for SSL certificates
     ├── server.crt        # SSL certificate (generated)
     └── server.key        # SSL private key (generated)
@@ -137,7 +137,7 @@ Serves CSV files from the data directory.
 
 **Example:**
 ```bash
-curl -k https://localhost:8443/product.csv
+curl -k https://localhost:8443/testa_product.csv
 ```
 
 **Response Headers:**
@@ -154,10 +154,10 @@ curl -k https://localhost:8443/product.csv
 curl -k https://localhost:8443/health
 
 # Download CSV file
-curl -k https://localhost:8443/product.csv -o product.csv
+curl -k https://localhost:8443/testa_product.csv -o testa_product.csv
 
 # View CSV content
-curl -k https://localhost:8443/product.csv
+curl -k https://localhost:8443/testa_product.csv
 ```
 
 ### Using Python requests
@@ -178,7 +178,7 @@ print(response.text)
 
 ## CSV File Format
 
-The sample `product.csv` file includes the following columns:
+The sample `testa_product.csv` file includes the following columns:
 
 - `id` - Product identifier
 - `title` - Product title
@@ -276,7 +276,7 @@ import io
 
 # Download CSV feed via HTTPS
 response = requests.get(
-    'https://localhost:8443/product.csv',
+    'https://localhost:8443/testa_product.csv',
     verify=False  # Disable SSL verification for self-signed cert
 )
 

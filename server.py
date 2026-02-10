@@ -163,7 +163,7 @@ async def root():
                 </div>
                 <div class="info">
                     <p><strong>Example Usage:</strong></p>
-                    <pre>curl -k https://localhost:{SERVER_PORT}/product.csv</pre>
+                    <pre>curl -k https://localhost:{SERVER_PORT}/testa_product.csv</pre>
                 </div>
             </div>
         </body>
