@@ -7,7 +7,7 @@ import os
 import logging
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -122,6 +122,8 @@ async def root():
                             <li><code>GET /</code> - This page</li>
                             <li><code>GET /health</code> - Health check</li>
                             <li><code>GET /{filename}.csv</code> - Download CSV file</li>
+                            <li><code>POST /upload</code> - Upload CSV (multipart)</li>
+                            <li><code>POST /export</code> - Push CSV (body + filename)</li>
                         </ul>
                     </div>
                 </div>
@@ -189,14 +191,99 @@ async def health_check():
     }
 
 
+def _validate_csv_filename(name: str) -> str:
+    """Ensure filename is safe and ends with .csv."""
+    name = name.strip()
+    if ".." in name or "/" in name or "\\" in name or not name:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not name.lower().endswith(".csv"):
+        name = f"{name}.csv"
+    return name
+
+
+@app.post("/upload")
+async def upload_csv(
+    file: UploadFile = File(..., description="CSV file to upload"),
+    filename: Optional[str] = Form(None, description="Override filename (optional)"),
+):
+    """
+    Upload (push) a CSV file to the server.
+    Use multipart/form-data with a file field; optionally set 'filename' to choose the stored name.
+    """
+    try:
+        name = filename or file.filename or "uploaded.csv"
+        name = _validate_csv_filename(name)
+        file_path = DATA_DIR / name
+
+        content = await file.read()
+        file_path.write_bytes(content)
+        size = len(content)
+
+        logger.info(f"Uploaded CSV: {name} ({size} bytes)")
+        return {
+            "status": "ok",
+            "message": "CSV uploaded successfully",
+            "filename": name,
+            "size_bytes": size,
+            "url": f"/{name}",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Upload failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Upload failed")
+
+
+@app.post("/export")
+async def export_csv(request: Request):
+    """
+    Push CSV content in the request body (Content-Type: text/csv).
+    Optional: ?filename=myfeed.csv or header X-Filename: myfeed.csv
+    """
+    content_type = request.headers.get("content-type", "")
+    if "text/csv" not in content_type and "application/octet-stream" not in content_type:
+        raise HTTPException(
+            status_code=415,
+            detail="Content-Type must be text/csv or application/octet-stream",
+        )
+
+    filename = request.query_params.get("filename") or request.headers.get("x-filename")
+    if not filename:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide filename via ?filename=myfile.csv or X-Filename header",
+        )
+
+    try:
+        name = _validate_csv_filename(filename)
+        body = await request.body()
+        file_path = DATA_DIR / name
+        file_path.write_bytes(body)
+        size = len(body)
+
+        logger.info(f"Exported CSV: {name} ({size} bytes)")
+        return {
+            "status": "ok",
+            "message": "CSV exported successfully",
+            "filename": name,
+            "size_bytes": size,
+            "url": f"/{name}",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Export failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Export failed")
+
+
 @app.get("/{filename}")
 async def get_csv_file(filename: str):
     """
     Serve CSV files from the data directory.
-    
+
     Args:
         filename: Name of the CSV file to serve
-        
+
     Returns:
         FileResponse with the CSV file content
     """

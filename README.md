@@ -145,6 +145,69 @@ curl -k https://localhost:8443/testa_product.csv
 - `Content-Disposition: attachment; filename="product.csv"`
 - `Access-Control-Allow-Origin: *`
 
+### `POST /upload` (push CSV as file)
+Upload a CSV file using multipart form data. Your system can push a file to the server.
+
+**Example (curl):**
+```bash
+curl -k -X POST https://localhost:8443/upload \
+  -F "file=@/path/to/myfeed.csv" \
+  -F "filename=myfeed.csv"
+```
+`filename` is optional; if omitted, the uploaded file's name is used.
+
+**Example (Python requests):**
+```python
+import requests
+
+with open("myfeed.csv", "rb") as f:
+    r = requests.post(
+        "https://localhost:8443/upload",
+        files={"file": ("myfeed.csv", f, "text/csv")},
+        data={"filename": "myfeed.csv"},  # optional
+        verify=False,
+    )
+print(r.json())  # {"status": "ok", "filename": "myfeed.csv", "url": "/myfeed.csv", ...}
+```
+
+### `POST /export` (push CSV in request body)
+Send CSV content in the request body with `Content-Type: text/csv`. Provide the filename via query or header.
+
+**Example (curl):**
+```bash
+curl -k -X POST "https://localhost:8443/export?filename=exported.csv" \
+  -H "Content-Type: text/csv" \
+  --data-binary @myfeed.csv
+```
+
+**Example (Python requests):**
+```python
+import requests
+
+with open("myfeed.csv", "rb") as f:
+    csv_content = f.read()
+
+r = requests.post(
+    "https://localhost:8443/export",
+    params={"filename": "exported.csv"},  # or use header: X-Filename: exported.csv
+    data=csv_content,
+    headers={"Content-Type": "text/csv"},
+    verify=False,
+)
+print(r.json())  # {"status": "ok", "filename": "exported.csv", "url": "/exported.csv", ...}
+```
+
+**Response (both endpoints):**
+```json
+{
+  "status": "ok",
+  "message": "CSV uploaded successfully",
+  "filename": "myfeed.csv",
+  "size_bytes": 1234,
+  "url": "/myfeed.csv"
+}
+```
+
 ## Testing
 
 ### Using curl
@@ -166,7 +229,7 @@ curl -k https://localhost:8443/testa_product.csv
 import requests
 
 # Disable SSL verification for self-signed certificates
-response = requests.get('https://localhost:8443/product.csv', verify=False)
+response = requests.get('https://localhost:8443/testa_product.csv', verify=False)
 print(response.text)
 ```
 
