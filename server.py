@@ -3,6 +3,8 @@ HTTPS Server for CSV Feed Testing
 A FastAPI-based HTTPS server that serves CSV files for testing feed import/export functionality.
 """
 
+import csv
+import json
 import os
 import logging
 from pathlib import Path
@@ -122,6 +124,7 @@ async def root():
                             <li><code>GET /</code> - This page</li>
                             <li><code>GET /health</code> - Health check</li>
                             <li><code>GET /{filename}.csv</code> - Download CSV file</li>
+                            <li><code>GET /{filename}.csv/json</code> - CSV as JSON array (valid for ADF REST: Format = JSON, no collection reference)</li>
                             <li><code>POST /upload</code> - Upload CSV (multipart)</li>
                             <li><code>POST /export</code> - Push CSV (body + filename)</li>
                         </ul>
@@ -274,6 +277,30 @@ async def export_csv(request: Request):
     except Exception as e:
         logger.error(f"Export failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Export failed")
+
+
+@app.get("/{filename}/json")
+async def get_csv_as_json(filename: str):
+    """
+    Serve CSV file as a single JSON array. Valid for Azure Data Factory REST:
+    Format = JSON, Collection reference = (leave empty).
+    Example: GET /product.csv/json
+    """
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if not filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV filenames are supported (e.g. product.csv)")
+
+    file_path = DATA_DIR / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File '{filename}' not found")
+
+    with open(file_path, "r", encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
+
+    logger.info(f"Serving CSV as JSON array: {filename} ({len(rows)} rows)")
+    return rows  # FastAPI serializes as [{"id":"...", ...}, ...]
 
 
 @app.get("/{filename}")
