@@ -9,7 +9,7 @@ import os
 import logging
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration from environment variables
 DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
+ARCHIVE_DIR = Path(os.getenv("ARCHIVE_DIR", "archive"))
 CERTS_DIR = Path(os.getenv("CERTS_DIR", "certs"))
 SERVER_PORT = int(os.getenv("SERVER_PORT", "8443"))
 SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown events."""
     logger.info("Starting HTTPS CSV Server...")
     logger.info(f"Data directory: {DATA_DIR.absolute()}")
+    logger.info(f"Archive directory: {ARCHIVE_DIR.absolute()}")
     
     # Check if running on Render
     render_port = os.getenv("PORT")
@@ -122,13 +124,15 @@ async def root():
                         <p><strong>Available Endpoints:</strong></p>
                         <ul>
                             <li><code>GET /</code> - This page</li>
+                            <li><code>GET /archive</code> - List archive files (served as <strong>JSON by default</strong>)</li>
                             <li><code>GET /health</code> - Health check</li>
-                            <li><code>GET /{filename}.csv</code> - Download CSV file</li>
-                            <li><code>GET /{filename}.csv/json</code> - CSV as JSON array (valid for ADF REST: Format = JSON, no collection reference)</li>
+                            <li><code>GET /{filename}.csv</code> - Download CSV file (data)</li>
+                            <li><code>GET /{filename}.csv/json</code> - CSV as JSON array (data)</li>
                             <li><code>POST /upload</code> - Upload CSV (multipart)</li>
                             <li><code>POST /export</code> - Push CSV (body + filename)</li>
                         </ul>
                     </div>
+                    <p><a href="/archive">Archive (JSON by default)</a></p>
                 </div>
             </body>
             </html>
@@ -170,6 +174,7 @@ async def root():
                     <p><strong>Example Usage:</strong></p>
                     <pre>curl -k https://localhost:{SERVER_PORT}/testa_product.csv</pre>
                 </div>
+                <p><a href="/archive">Archive (JSON by default)</a></p>
             </div>
         </body>
         </html>
@@ -184,13 +189,16 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
+    archive_count = len(list(ARCHIVE_DIR.glob("*.csv"))) if ARCHIVE_DIR.exists() else 0
     return {
         "status": "healthy",
         "data_directory": str(DATA_DIR.absolute()),
+        "archive_directory": str(ARCHIVE_DIR.absolute()),
         "certs_directory": str(CERTS_DIR.absolute()),
         "ssl_cert_exists": SSL_CERT_PATH.exists(),
         "ssl_key_exists": SSL_KEY_PATH.exists(),
-        "csv_files_count": len(list(DATA_DIR.glob("*.csv")))
+        "csv_files_count": len(list(DATA_DIR.glob("*.csv"))),
+        "archive_csv_files_count": archive_count,
     }
 
 
@@ -202,6 +210,12 @@ def _validate_csv_filename(name: str) -> str:
     if not name.lower().endswith(".csv"):
         name = f"{name}.csv"
     return name
+
+
+def _read_csv_as_json(file_path: Path) -> list:
+    """Read a CSV file and return rows as list of dicts."""
+    with open(file_path, "r", encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
 
 
 @app.post("/upload")
@@ -279,6 +293,72 @@ async def export_csv(request: Request):
         raise HTTPException(status_code=500, detail="Export failed")
 
 
+# ---------- Archive: served as JSON by default ----------
+@app.get("/archive", response_class=HTMLResponse)
+async def list_archive():
+    """List CSV files in the archive directory. Archive files are served as JSON by default."""
+    if not ARCHIVE_DIR.exists():
+        return HTMLResponse(
+            content="<!DOCTYPE html><html><body><div class='container'><h1>Archive</h1><p>Archive directory not found.</p></div></body></html>"
+        )
+    csv_files = list(ARCHIVE_DIR.glob("*.csv"))
+    if not csv_files:
+        file_list = "<li>No CSV files in archive.</li>"
+    else:
+        file_list = "\n".join([
+            f'<li><a href="/archive/{f.name}">{f.name}</a> (JSON, {f.stat().st_size} bytes) '
+            f'| <a href="/archive/{f.name}?format=csv">CSV</a></li>'
+            for f in sorted(csv_files)
+        ])
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head><title>Archive - CSV Feed Server</title></head>
+    <body style="font-family: Arial; margin: 40px;">
+        <div class="container">
+            <h1>Archive</h1>
+            <p>Archive files are served as <strong>JSON by default</strong>. Use <code>?format=csv</code> for raw CSV.</p>
+            <ul>{file_list}</ul>
+            <p><a href="/">Back to Data</a></p>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
+
+@app.get("/archive/{filename}")
+async def get_archive_file(
+    filename: str,
+    format: Optional[str] = Query(None, description="Use 'csv' for raw CSV; default is JSON"),
+):
+    """
+    Serve archive CSV as JSON by default. Add ?format=csv for raw CSV.
+    Example: GET /archive/olist_products_dataset.csv  -> JSON array (for ADF REST).
+    """
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not filename.lower().endswith(".csv"):
+        filename = f"{filename}.csv"
+    file_path = ARCHIVE_DIR / filename
+    if not ARCHIVE_DIR.exists() or not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Archive file '{filename}' not found")
+    if format and format.lower() == "csv":
+        logger.info(f"Serving archive as CSV: {filename} ({file_path.stat().st_size} bytes)")
+        return FileResponse(
+            path=file_path,
+            media_type="text/csv",
+            filename=filename,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+    rows = _read_csv_as_json(file_path)
+    logger.info(f"Serving archive as JSON: {filename} ({len(rows)} rows)")
+    return rows
+
+
 @app.get("/{filename}/json")
 async def get_csv_as_json(filename: str):
     """
@@ -296,11 +376,9 @@ async def get_csv_as_json(filename: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"File '{filename}' not found")
 
-    with open(file_path, "r", encoding="utf-8", newline="") as f:
-        rows = list(csv.DictReader(f))
-
+    rows = _read_csv_as_json(file_path)
     logger.info(f"Serving CSV as JSON array: {filename} ({len(rows)} rows)")
-    return rows  # FastAPI serializes as [{"id":"...", ...}, ...]
+    return rows
 
 
 @app.get("/{filename}")
