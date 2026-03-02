@@ -9,7 +9,7 @@ import os
 import logging
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Query
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -116,15 +116,16 @@ async def root():
                 <div class="container">
                     <h1>HTTPS CSV Feed Server</h1>
                     <div class="info">
-                        <p><strong>Status:</strong> Server is running</p>
-                        <p><strong>No CSV files found</strong> in the data directory.</p>
-                        <p>Please add CSV files to the <code>data/</code> directory.</p>
+                    <p><strong>Status:</strong> Server is running</p>
+                    <p><strong>No CSV files found</strong> in the data directory.</p>
+                    <p>Please add CSV files to the <code>data/</code> directory.</p>
+                    <p><strong>Using ADF?</strong> Use <code>/archive/filename.csv</code> (e.g. <code>/archive/olist_orders_dataset.csv</code>). Do not use <code>/</code>.</p>
                     </div>
                     <div class="warning">
                         <p><strong>Available Endpoints:</strong></p>
                         <ul>
                             <li><code>GET /</code> - This page</li>
-                            <li><code>GET /archive</code> - List archive files (served as <strong>JSON by default</strong>)</li>
+                            <li><code>GET /archive</code> - List archive files; <code>GET /archive/filename.csv</code> - CSV</li>
                             <li><code>GET /health</code> - Health check</li>
                             <li><code>GET /{filename}.csv</code> - Download CSV file (data)</li>
                             <li><code>GET /{filename}.csv/json</code> - CSV as JSON array (data)</li>
@@ -132,7 +133,7 @@ async def root():
                             <li><code>POST /export</code> - Push CSV (body + filename)</li>
                         </ul>
                     </div>
-                    <p><a href="/archive">Archive (JSON by default)</a></p>
+                    <p><a href="/archive">Archive</a></p>
                 </div>
             </body>
             </html>
@@ -173,8 +174,9 @@ async def root():
                 <div class="info">
                     <p><strong>Example Usage:</strong></p>
                     <pre>curl -k https://localhost:{SERVER_PORT}/testa_product.csv</pre>
+                    <p><strong>ADF / archive:</strong> Use <code>/archive/filename.csv</code> (e.g. <code>/archive/olist_orders_dataset.csv</code>).</p>
                 </div>
-                <p><a href="/archive">Archive (JSON by default)</a></p>
+                <p><a href="/archive">Archive</a></p>
             </div>
         </body>
         </html>
@@ -294,6 +296,18 @@ async def export_csv(request: Request):
 
 
 # ---------- Archive: served as JSON by default ----------
+@app.get("/archive/list")
+async def list_archive_files():
+    """
+    Return list of archive CSV filenames (JSON). Use in ADF to iterate: ForEach over
+    the list, then GET /archive/{filename} for each CSV.
+    """
+    if not ARCHIVE_DIR.exists():
+        return {"files": [], "message": "Archive directory not found"}
+    files = sorted(f.name for f in ARCHIVE_DIR.glob("*.csv"))
+    return {"files": files, "base_path": "/archive"}
+
+
 @app.get("/archive", response_class=HTMLResponse)
 async def list_archive():
     """List CSV files in the archive directory. Archive files are served as JSON by default."""
@@ -306,8 +320,7 @@ async def list_archive():
         file_list = "<li>No CSV files in archive.</li>"
     else:
         file_list = "\n".join([
-            f'<li><a href="/archive/{f.name}">{f.name}</a> (JSON, {f.stat().st_size} bytes) '
-            f'| <a href="/archive/{f.name}?format=csv">CSV</a></li>'
+            f'<li><a href="/archive/{f.name}">{f.name}</a> ({f.stat().st_size} bytes)</li>'
             for f in sorted(csv_files)
         ])
     html_content = f"""
@@ -317,7 +330,7 @@ async def list_archive():
     <body style="font-family: Arial; margin: 40px;">
         <div class="container">
             <h1>Archive</h1>
-            <p>Archive files are served as <strong>JSON by default</strong>. Use <code>?format=csv</code> for raw CSV.</p>
+            <p>CSV files: <code>GET /archive/filename.csv</code></p>
             <ul>{file_list}</ul>
             <p><a href="/">Back to Data</a></p>
         </div>
@@ -328,13 +341,9 @@ async def list_archive():
 
 
 @app.get("/archive/{filename}")
-async def get_archive_file(
-    filename: str,
-    format: Optional[str] = Query(None, description="Use 'csv' for raw CSV; default is JSON"),
-):
+async def get_archive_file(filename: str):
     """
-    Serve archive CSV as JSON by default. Add ?format=csv for raw CSV.
-    Example: GET /archive/olist_products_dataset.csv  -> JSON array (for ADF REST).
+    Serve archive CSV file. Simple URL: GET /archive/filename.csv
     """
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
@@ -343,20 +352,16 @@ async def get_archive_file(
     file_path = ARCHIVE_DIR / filename
     if not ARCHIVE_DIR.exists() or not file_path.exists():
         raise HTTPException(status_code=404, detail=f"Archive file '{filename}' not found")
-    if format and format.lower() == "csv":
-        logger.info(f"Serving archive as CSV: {filename} ({file_path.stat().st_size} bytes)")
-        return FileResponse(
-            path=file_path,
-            media_type="text/csv",
-            filename=filename,
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "Access-Control-Allow-Origin": "*",
-            },
-        )
-    rows = _read_csv_as_json(file_path)
-    logger.info(f"Serving archive as JSON: {filename} ({len(rows)} rows)")
-    return rows
+    logger.info(f"Serving archive: {filename} ({file_path.stat().st_size} bytes)")
+    return FileResponse(
+        path=file_path,
+        media_type="text/csv",
+        filename=filename,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
 
 
 @app.get("/{filename}/json")
